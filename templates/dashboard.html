@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Live Health Monitoring{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="bg-blue-50 border-l-4 border-blue-500 text-blue-700 p-4" role="alert">
+        <p class="font-bold">Live Data Stream Active</p>
+        <p class="text-sm">Dashboard ini menampilkan data langsung dari Raspberry Pi.</p>
+    </div>
+
+    <div id="alert-banner" style="display: none;" class="p-4 rounded-lg severity-critical">
+        <p class="font-semibold" id="alert-text">LIVE WARNING: CONNECTION LOST</p>
+        <p class="text-sm" id="alert-details">Mendapatkan data terakhir: --</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-gray-600 text-sm font-semibold uppercase mb-2">Heart Rate (BPM)</h3>
+            <p class="text-4xl font-bold text-gray-900" id="status-bpm">--</p>
+            <p class="text-gray-600 text-sm mt-2" id="status-bpm-range">Normal Range: 60-100</p>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-gray-600 text-sm font-semibold uppercase mb-2">SpO2 (%)</h3>
+            <p class="text-4xl font-bold text-gray-900" id="status-spo2">--</p>
+            <p class="text-gray-600 text-sm mt-2" id="status-spo2-range">Ideal: 95% - 100%</p>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-gray-600 text-sm font-semibold uppercase mb-2">Condition</h3>
+            <p class="text-2xl font-bold" id="status-indicator">Waiting...</p>
+            <p class="text-gray-600 text-sm mt-2" id="status-time">Last updated: --</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Live BPM Trend (Last 60s)</h3>
+            <div style="position: relative; height: 300px;">
+                <canvas id="bpmChart"></canvas>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Live SpO2 Trend (Last 60s)</h3>
+            <div style="position: relative; height: 300px;">
+                <canvas id="spo2Chart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4" role="alert">
+        <p class="font-bold">Fitur Historis Dinonaktifkan</p>
+        <p>Input manual dan riwayat 24 jam dinonaktifkan. Silakan tambahkan database (seperti SQLite atau PostgreSQL) jika Anda ingin mengaktifkan fitur ini.</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+<script>
+    const MAX_DATA_POINTS = 30; // Batas data point untuk trend live (misalnya 60 detik)
+
+    const socket = io("http://192.168.97.69:5000", {
+    transports: ["websocket", "polling"],
+    upgrade: true
+    });
+    
+    let bpmChart, spo2Chart;
+    let chartLabels = [];
+    let bpmData = [];
+    let spo2Data = [];
+
+    // --- Fungsi Bantuan Styling ---
+    function updateStatusStyle(elementId, condition) {
+        const statusEl = document.getElementById(elementId);
+        // Menghapus class yang ada
+        statusEl.classList.remove('status-normal', 'status-tachycardia', 'status-bradycardia', 'text-gray-900');
+        
+        // Atur class baru dan animasi alert
+        if (condition === 'NORMAL') {
+            statusEl.classList.add('status-normal'); // Gunakan class dari base.html
+            statusEl.style.animation = 'none';
+        } else if (condition === 'TACHYCARDIA' || condition === 'BRADYCARDIA') {
+            statusEl.classList.add(condition === 'TACHYCARDIA' ? 'status-tachycardia' : 'status-bradycardia');
+            statusEl.style.animation = 'blinker 1s linear infinite';
+        } else {
+            statusEl.classList.add('text-gray-900');
+            statusEl.style.animation = 'none';
+        }
+    }
+    
+    // --- Inisialisasi Chart.js ---
+    function initCharts() {
+        // BPM Chart
+        const bpmCtx = document.getElementById('bpmChart').getContext('2d');
+        bpmChart = new Chart(bpmCtx, {
+            type: 'line',
+            data: {
+                labels: chartLabels,
+                datasets: [{
+                    label: 'BPM',
+                    data: bpmData,
+                    borderColor: '#3b82f6', 
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: false, min: 40, max: 120 }
+                }
+            }
+        });
+
+        // SpO2 Chart (Mengganti HRV)
+        const spo2Ctx = document.getElementById('spo2Chart').getContext('2d');
+        spo2Chart = new Chart(spo2Ctx, {
+            type: 'line',
+            data: {
+                labels: chartLabels,
+                datasets: [{
+                    label: 'SpO2',
+                    data: spo2Data,
+                    borderColor: '#10b981', 
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: false, min: 70, max: 100 }
+                }
+            }
+        });
+    }
+
+    // --- Fungsi Update Chart ---
+    function addDataToCharts(label, bpm, spo2) {
+        if (chartLabels.length >= MAX_DATA_POINTS) {
+            chartLabels.shift();
+            bpmData.shift();
+            spo2Data.shift();
+        }
+
+        chartLabels.push(label);
+        bpmData.push(bpm);
+        spo2Data.push(spo2);
+
+        bpmChart.update('none'); 
+        spo2Chart.update('none');
+    }
+
+    
+    // 1. Menerima Data dari Pi
+    socket.on('update_web_client', function(data) {
+        console.log("DATA DITERIMA DARI SERVER:", data);
+
+        const bpm = parseInt(data.heart_rate);
+        const spo2 = parseFloat(data.spo2);
+        const condition = data.condition;
+        const time = new Date().toLocaleTimeString();
+        
+        // 1. Update Status Cards
+        document.getElementById('status-bpm').textContent = bpm;
+        document.getElementById('status-spo2').textContent = `${spo2}%`;
+        document.getElementById('status-time').textContent = `Last updated: ${time}`;
+
+       const alertBanner = document.getElementById('alert-banner');
+        const statusIndicator = document.getElementById('status-indicator');
+
+        // Reset animasi setiap ada data baru
+        statusIndicator.style.animation = 'none';
+
+        if (condition === 'NORMAL') {
+            alertBanner.style.display = 'none';
+            statusIndicator.className = 'text-2xl font-bold text-green-600';
+        } else if (condition === 'TACHYCARDIA' || condition === 'BRADYCARDIA' || condition === 'ALERT') {
+            alertBanner.style.display = 'block';
+            alertBanner.className = 'p-4 rounded-lg bg-red-100 text-red-700 border-l-4 border-red-500';
+
+            document.getElementById('alert-text').textContent = `WARNING: ${condition} DETECTED!`;
+            document.getElementById('alert-details').textContent = `BPM: ${bpm} / SpO2: ${spo2}%`;
+
+            statusIndicator.className = 'text-2xl font-bold text-red-600';
+            statusIndicator.style.animation = 'blinker 1s linear infinite';
+        } else {
+            // Untuk status "PROCESSING" atau "WAITING"
+            alertBanner.style.display = 'none';
+            statusIndicator.className = 'text-2xl font-bold text-gray-500';
+        }
+
+        // 3. Update Charts Real-time
+        addDataToCharts(time, bpm, spo2);
+    });
+    
+    // 2. Jika Koneksi Terputus
+    socket.on('disconnect', function() {
+        const alertBanner = document.getElementById('alert-banner');
+        alertBanner.style.display = 'block';
+        document.getElementById('alert-text').textContent = 'CONNECTION LOST!';
+        document.getElementById('alert-details').textContent = `Trying to reconnect to Flask server...`;
+        alertBanner.className = 'p-4 rounded-lg severity-high';
+    });
+
+    // --- INISIALISASI ---
+    initCharts();
+</script>
+
+<style>
+@keyframes blinker { 50% { opacity: 0.1; } }
+.alert { animation: blinker 1s linear infinite; }
+</style>
+{% endblock %}

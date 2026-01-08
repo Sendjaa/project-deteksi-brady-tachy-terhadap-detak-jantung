@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Warning Logs - Live Monitoring{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="bg-yellow-50 border-l-4 border-yellow-500 text-yellow-700 p-4" role="alert">
+        <p class="font-bold">Log Temporer (Sesi)</p>
+        <p class="text-sm">Log ini hanya disimpan selama sesi browser aktif karena tidak ada database. Peringatan baru akan ditambahkan secara real-time.</p>
+    </div>
+
+    <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold text-gray-900">Live Warning Log</h2>
+        <select id="filter-select" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500">
+            <option value="all">All Warnings</option>
+            <option value="TACHYCARDIA">Tachycardia</option>
+            <option value="BRADYCARDIA">Bradycardia</option>
+        </select>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-md overflow-hidden">
+        <table class="w-full">
+            <thead class="bg-gray-100 border-b border-gray-200">
+                <tr>
+                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">Time</th>
+                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">Event Type</th>
+                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">Message</th>
+                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">Readings (BPM/SpO2)</th>
+                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">Severity</th>
+                </tr>
+            </thead>
+            <tbody id="logs-table" class="divide-y divide-gray-200">
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-center text-gray-600">Waiting for live warnings...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+<script>
+    const socket = io({
+    transports: ['websocket']
+    });
+    let logHistory = [];
+    let currentFilter = 'all';
+
+    // Helper untuk menentukan severity
+    function getSeverity(condition) {
+        if (condition === 'TACHYCARDIA' || condition === 'BRADYCARDIA') {
+            return { name: 'Critical', class: 'severity-critical' };
+        }
+        // Walaupun kita hanya log kondisi NON-NORMAL, ini sebagai fallback
+        return { name: 'Normal', class: 'severity-low' }; 
+    }
+    
+    // Fungsi untuk me-render ulang tabel berdasarkan logHistory dan filter
+    function renderLogs() {
+        const tbody = document.getElementById('logs-table');
+        const filteredLogs = logHistory.filter(log => {
+            if (currentFilter === 'all') return true;
+            return log.condition.toUpperCase() === currentFilter.toUpperCase();
+        }).sort((a, b) => b.timestamp - a.timestamp); // Sortir dari terbar
+        if (filteredLogs.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="px-6 py-4 text-center text-gray-600">No warnings of type ${currentFilter} found.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = filteredLogs.map(log => {
+            const time = new Date(log.timestamp).toLocaleTimeString();
+            const severity = getSeverity(log.condition);
+            const value = log.bpm ? `BPM: ${log.bpm} / SpO2: ${log.spo2}%` : '-';
+            
+            return `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${time}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span class="px-2 py-1 rounded-full text-xs font-semibold bg-gray-200">${log.condition}</span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-900">Condition **${log.condition}** detected. Immediate attention may be required.</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${value}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span class="px-2 py-1 rounded-full text-xs font-semibold ${severity.class}">${severity.name}</span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    // --- SOCKET.IO LISTENERS ---
+
+    socket.on('update_web_client', function(data) {
+        const condition = data.condition;
+        
+        // Hanya log jika ada kondisi yang tidak NORMAL
+        if (condition !== 'NORMAL') {
+            const newLog = {
+                timestamp: Date.now(),
+                condition: condition,
+                bpm: data.heart_rate,
+                spo2: data.spo2
+            };
+            
+            logHistory.push(newLog);
+            renderLogs();
+        }
+    });
+
+    // --- Event Listener Filter ---
+    document.getElementById('filter-select').addEventListener('change', (e) => {
+        currentFilter = e.target.value;
+        renderLogs();
+    });
+
+    // Panggilan awal (tabel kosong, menunggu data)
+    renderLogs();
+</script>
+
+<style>
+/* Styling severity dimasukkan langsung di sini. Idealnya ada di base.css */
+.severity-low { background-color: #dbeafe; color: #1e40af; } 
+.severity-medium { background-color: #fef3c7; color: #b45309; } 
+.severity-high { background-color: #fee2e2; color: #b91c1c; } 
+.severity-critical { background-color: #fecaca; color: #991b1b; } 
+</style>
+{% endblock %}

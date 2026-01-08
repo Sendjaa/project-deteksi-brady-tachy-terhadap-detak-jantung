@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Health Monitoring Dashboard{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+    <div class="bg-white rounded-lg shadow-md p-8">
+        <h2 class="text-3xl font-bold text-gray-900 mb-4">Welcome to Health Monitor</h2>
+        <p class="text-gray-600 mb-4">
+            Monitor vital signs from the Raspberry Pi sensor in real-time using Socket.IO.
+            Track Heart Rate (BPM) and Saturation Oksigen (SpO2) with automatic detection for Bradicardia and Takikardia.
+        </p>
+        <div class="space-y-3">
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-green-500 mr-3 mt-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                </svg>
+                <span class="text-gray-700">Real-time vital sign monitoring (WebSocket)</span>
+            </div>
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-green-500 mr-3 mt-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                </svg>
+                <span class="text-gray-700">Automatic warning detection (Brady/Tachy)</span>
+            </div>
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-green-500 mr-3 mt-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                </svg>
+                <span class="text-gray-700">Powered by Raspberry Pi & MAX30102</span>
+            </div>
+        </div>
+        <a href="#" class="mt-6 inline-block bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition">
+            Live Feed Active
+        </a>
+    </div>
+
+    <div class="space-y-4">
+        <div id="latest-card" class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Live Sensor Reading (<span id="device-id">N/A</span>)</h3>
+            <div class="space-y-3">
+                
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-600">Heart Rate (BPM)</span>
+                    <span id="latest-bpm" class="text-4xl font-bold text-gray-900">--</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-600">SpO2 (%)</span>
+                    <span id="latest-spo2" class="text-4xl font-bold text-gray-900">--</span>
+                </div>
+                
+                <div class="flex justify-between items-center pt-2">
+                    <span class="text-gray-600">Condition</span>
+                    <span id="latest-status" class="px-3 py-1 rounded-full text-lg font-bold">Waiting...</span>
+                </div>
+                
+                <div class="flex justify-between items-center text-sm pt-4 border-t">
+                    <span class="text-gray-600">Last Updated</span>
+                    <span id="latest-time" class="text-gray-900">--</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="connection-card" class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Connection Status</h3>
+            <p id="socket-status" class="text-lg font-bold text-yellow-500">Connecting...</p>
+            <p id="pi-status" class="text-sm text-gray-500">Waiting for data from Raspberry Pi...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+<script>
+    const socket = io("http://192.168.97.69:5000", {
+        transports: ["websocket", "polling"],
+        upgrade: true
+    });
+
+    // --- Fungsi Bantuan Styling ---
+    function updateStatusStyle(element, condition) {
+        element.classList.remove('bg-gray-200', 'bg-green-500', 'bg-red-500', 'bg-yellow-500', 'text-white', 'alert');
+
+        if (condition === 'NORMAL') {
+            element.classList.add('bg-green-500', 'text-white');
+        } else if (condition === 'BRADYCARDIA' || condition === 'TACHYCARDIA') {
+            element.classList.add('bg-red-500', 'text-white', 'alert');
+        } else {
+            element.classList.add('bg-gray-200'); // PROCESSING atau default
+        }
+    }
+    
+    // --- SOCKET.IO LISTENERS ---
+    
+    // 1. Koneksi Berhasil
+    socket.on('connect', function() {
+        document.getElementById('socket-status').textContent = 'Connected to Server';
+        document.getElementById('socket-status').className = 'text-lg font-bold text-green-500';
+    });
+
+    // 2. Koneksi Terputus
+    socket.on('disconnect', function() {
+        document.getElementById('socket-status').textContent = 'Disconnected from Server';
+        document.getElementById('socket-status').className = 'text-lg font-bold text-red-500';
+        document.getElementById('pi-status').textContent = 'Connection lost. Trying to reconnect...';
+    });
+
+    // 3. Menerima Data dari Pi
+    socket.on('update_web_client', function(data) {
+        
+        // Update data utama
+        document.getElementById('latest-bpm').textContent = data.heart_rate;
+        document.getElementById('latest-spo2').textContent = data.spo2;
+        
+        // Update waktu
+        const date = new Date(data.timestamp); // Asumsi timestamp dikirim sebagai string
+        document.getElementById('latest-time').textContent = date.toLocaleTimeString();
+
+        // Update ID perangkat dan status Pi
+        document.getElementById('device-id').textContent = data.device_id;
+        document.getElementById('pi-status').textContent = 'Live data stream active.';
+
+        // Update status/kondisi
+        const statusEl = document.getElementById('latest-status');
+        const condition = data.condition;
+        
+        statusEl.textContent = condition;
+        updateStatusStyle(statusEl, condition);
+    });
+</script>
+
+<style>
+/* CSS Tambahan untuk animasi alert (Tailwind tidak menyediakan animasi blinker) */
+@keyframes blinker { 50% { opacity: 0.1; } }
+.alert { animation: blinker 1s linear infinite; }
+</style>
+{% endblock %}
